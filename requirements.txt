@@ -1,6 +1,7 @@
 # Inti
 anthropic>=0.40.0
 python-dotenv>=1.0.0
+openai>=1.40.0   # dipakai untuk provider Groq / Gemini / OpenRouter
 
 # Suara masuk (STT)
 SpeechRecognition>=3.10.0

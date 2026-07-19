@@ -6,11 +6,13 @@ Tambah kemampuan baru = tambah entri di TOOL_SCHEMAS + fungsi di REGISTRY.
 from __future__ import annotations
 
 import datetime as dt
+import os
 import json
 import logging
 import platform
 import shutil
 import subprocess
+import time
 import threading
 import webbrowser
 from pathlib import Path
@@ -50,17 +52,42 @@ def _confirm(question: str) -> bool:
 # Implementasi tool
 # ====================================================================== #
 def open_application(name: str) -> str:
+    """Buka aplikasi. Menangani 3 jenis: aplikasi Microsoft Store (lewat URI),
+    aplikasi desktop biasa, dan situs web sebagai cadangan."""
+    key = name.strip().lower()
+
+    # 1. Aplikasi Store / UWP -> harus lewat protokol URI, bukan 'start nama'
+    uri_apps = {
+        "whatsapp": "whatsapp://",
+        "wa": "whatsapp://",
+        "spotify": "spotify:",
+        "telegram": "tg://",
+        "discord": "discord://",
+        "settings": "ms-settings:",
+        "pengaturan": "ms-settings:",
+        "kalender": "outlookcal:",
+        "mail": "outlookmail:",
+    }
+    if OS == "Windows" and key in uri_apps:
+        try:
+            os.startfile(uri_apps[key])  # type: ignore[attr-defined]
+            return f"Aplikasi '{key}' dibuka."
+        except Exception as exc:  # noqa: BLE001
+            log.warning("URI gagal untuk %s: %s", key, exc)
+
+    # 2. Aplikasi desktop biasa
     aliases = {
         "browser": {"Windows": "chrome", "Darwin": "Google Chrome", "Linux": "google-chrome"},
         "chrome": {"Windows": "chrome", "Darwin": "Google Chrome", "Linux": "google-chrome"},
+        "edge": {"Windows": "msedge", "Darwin": "Microsoft Edge", "Linux": "microsoft-edge"},
         "vscode": {"Windows": "code", "Darwin": "Visual Studio Code", "Linux": "code"},
         "notepad": {"Windows": "notepad", "Darwin": "TextEdit", "Linux": "gedit"},
         "kalkulator": {"Windows": "calc", "Darwin": "Calculator", "Linux": "gnome-calculator"},
         "explorer": {"Windows": "explorer", "Darwin": "Finder", "Linux": "nautilus"},
         "terminal": {"Windows": "wt", "Darwin": "Terminal", "Linux": "gnome-terminal"},
-        "spotify": {"Windows": "spotify", "Darwin": "Spotify", "Linux": "spotify"},
+        "xampp": {"Windows": r"C:\\xampp\\xampp-control.exe", "Darwin": "XAMPP", "Linux": "xampp"},
     }
-    app = aliases.get(name.strip().lower(), {}).get(OS, name)
+    app = aliases.get(key, {}).get(OS, name)
     try:
         if OS == "Windows":
             subprocess.Popen(["cmd", "/c", "start", "", app], shell=False)
@@ -70,7 +97,7 @@ def open_application(name: str) -> str:
             subprocess.Popen([app], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return f"Aplikasi '{app}' dijalankan."
     except Exception as exc:  # noqa: BLE001
-        return f"GAGAL membuka '{app}': {exc}"
+        return f"GAGAL membuka '{app}': {exc}. Coba sebutkan nama lain."
 
 
 def open_url(url: str) -> str:
@@ -228,12 +255,62 @@ def run_shell(command: str) -> str:
         return f"GAGAL: {exc}"
 
 
+def _focus_window(title_hint: str) -> bool:
+    """Aktifkan jendela yang judulnya mengandung title_hint."""
+    try:
+        import pygetwindow as gw
+
+        for w in gw.getAllWindows():
+            if title_hint.lower() in (w.title or "").lower() and w.title:
+                if w.isMinimized:
+                    w.restore()
+                w.activate()
+                time.sleep(0.4)
+                return True
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Gagal fokus jendela '%s': %s", title_hint, exc)
+    return False
+
+
+def navigate_current_tab(url: str, browser: str = "chrome") -> str:
+    """Buka alamat DI TAB YANG SEDANG AKTIF, bukan tab baru."""
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    hint = {"chrome": "chrome", "edge": "edge", "firefox": "firefox"}.get(
+        browser.strip().lower(), browser
+    )
+    if not _focus_window(hint):
+        webbrowser.open(url)
+        return f"Jendela {browser} tidak ditemukan, jadi saya buka di tab baru: {url}"
+
+    try:
+        import pyautogui
+
+        pyautogui.hotkey("ctrl", "l")     # fokus ke address bar
+        time.sleep(0.2)
+        pyautogui.write(url, interval=0.005)
+        pyautogui.press("enter")
+        return f"Tab aktif dialihkan ke {url}"
+    except Exception as exc:  # noqa: BLE001
+        return f"GAGAL mengarahkan tab aktif: {exc}"
+
+
+def search_youtube_current_tab(query: str) -> str:
+    """Cari di YouTube menggunakan tab yang sedang aktif."""
+    return navigate_current_tab(
+        f"https://www.youtube.com/results?search_query={quote_plus(query)}"
+    )
+
+
 # ====================================================================== #
 # Registry + skema untuk Claude
 # ====================================================================== #
 REGISTRY = {
     "open_application": open_application,
     "open_url": open_url,
+    "navigate_current_tab": navigate_current_tab,
+    "search_youtube_current_tab": search_youtube_current_tab,
     "web_search": web_search,
     "play_youtube": play_youtube,
     "get_datetime": get_datetime,
@@ -268,6 +345,16 @@ TOOL_SCHEMAS = [
             ["name"]),
     _schema("open_url", "Membuka sebuah alamat web di browser.",
             {"url": {"type": "string"}}, ["url"]),
+    _schema("navigate_current_tab",
+            "WAJIB dipakai kalau pengguna sudah punya browser terbuka dan ingin berpindah halaman "
+            "TANPA membuka tab baru. Contoh: 'buka video lain', 'cari yang ini saja', 'ganti halaman'.",
+            {"url": {"type": "string"},
+             "browser": {"type": "string", "description": "chrome (default), edge, atau firefox"}},
+            ["url"]),
+    _schema("search_youtube_current_tab",
+            "Mencari di YouTube memakai tab yang SEDANG AKTIF, bukan tab baru. "
+            "Pakai ini kalau YouTube sudah terbuka dan pengguna ingin mencari hal lain.",
+            {"query": {"type": "string"}}, ["query"]),
     _schema("web_search", "Mencari sesuatu di Google dan membukanya di browser.",
             {"query": {"type": "string"}}, ["query"]),
     _schema("play_youtube", "Membuka YouTube untuk memutar lagu/video tertentu.",
