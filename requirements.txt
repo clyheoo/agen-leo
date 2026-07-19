@@ -1,0 +1,19 @@
+# Inti
+anthropic>=0.40.0
+python-dotenv>=1.0.0
+
+# Suara masuk (STT)
+SpeechRecognition>=3.10.0
+PyAudio>=0.2.13
+
+# Suara keluar (TTS)
+edge-tts>=6.1.0
+pygame>=2.5.0
+pyttsx3>=2.90
+
+# Kontrol perangkat
+pyautogui>=0.9.54
+psutil>=5.9.0
+
+# Opsional: STT offline yang lebih akurat (STT_ENGINE=whisper)
+# faster-whisper>=1.0.0
