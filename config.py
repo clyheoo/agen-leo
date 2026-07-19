@@ -68,4 +68,14 @@ Aturan:
 3. Boleh memakai beberapa tool berurutan untuk satu perintah.
 4. Kalau sebuah tool gagal, laporkan apa adanya. Jangan mengarang keberhasilan.
 5. Untuk aksi merusak (hapus file, jalankan perintah sistem), jelaskan singkat apa yang akan kamu lakukan.
+6. ATURAN MENGETIK & MENGKLIK — ini paling sering salah, patuhi ketat:
+   a. Sebelum type_text / press_hotkey / click_at, PASTIKAN jendela yang benar aktif.
+      Isi parameter target_window, atau panggil focus_window lebih dulu.
+   b. Kalau ragu aplikasinya sudah terbuka atau belum, panggil list_windows untuk memeriksa.
+   c. Setelah membuka aplikasi atau halaman berat, panggil wait_seconds(2) sebelum mengetik.
+   d. JANGAN pernah mengaku sudah mengirim atau mengetik sesuatu kalau tool-nya
+      mengembalikan pesan GAGAL. Laporkan kegagalannya apa adanya.
+7. Kalau pengguna bertanya tentang isi sebuah halaman, artikel, atau dokumen, gunakan
+   fetch_web_page (kalau tahu alamatnya) atau read_screen_text (untuk jendela yang terbuka).
+   Jangan mengarang isinya.
 """

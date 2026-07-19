@@ -168,25 +168,199 @@ def control_media(action: str) -> str:
         return f"GAGAL kontrol media: {exc}"
 
 
-def type_text(text: str) -> str:
+def type_text(text: str, target_window: str = "") -> str:
+    """Ketik teks. Kalau target_window diisi, jendela itu difokuskan dulu.
+
+    Memakai clipboard + Ctrl+V agar huruf non-ASCII (e, aksen, emoji) tidak rusak,
+    dan jauh lebih cepat daripada mengetik karakter satu per satu.
+    """
     try:
         import pyautogui
+        import pyperclip
 
-        pyautogui.write(text, interval=0.01)
-        return f"Mengetik {len(text)} karakter di jendela aktif."
+        if target_window and not _focus_window(target_window):
+            return f"GAGAL: jendela '{target_window}' tidak ditemukan. Buka dulu aplikasinya."
+
+        time.sleep(0.3)
+        backup = ""
+        try:
+            backup = pyperclip.paste()
+        except Exception:  # noqa: BLE001
+            pass
+
+        pyperclip.copy(text)
+        pyautogui.hotkey("ctrl", "v")
+        time.sleep(0.2)
+
+        if backup:
+            try:
+                pyperclip.copy(backup)
+            except Exception:  # noqa: BLE001
+                pass
+        return f"Mengetik '{text[:40]}' ({len(text)} karakter)."
     except Exception as exc:  # noqa: BLE001
         return f"GAGAL mengetik: {exc}"
 
 
-def press_hotkey(keys: str) -> str:
-    """keys contoh: 'ctrl+s', 'alt+tab', 'win+d'"""
+def press_hotkey(keys: str, times: int = 1, target_window: str = "") -> str:
+    """keys contoh: 'ctrl+s', 'alt+tab', 'enter', 'down'. times = berapa kali ditekan."""
     try:
         import pyautogui
 
-        pyautogui.hotkey(*[k.strip().lower() for k in keys.split("+")])
-        return f"Hotkey {keys} ditekan."
+        if target_window and not _focus_window(target_window):
+            return f"GAGAL: jendela '{target_window}' tidak ditemukan."
+
+        combo = [k.strip().lower() for k in keys.split("+") if k.strip()]
+        for _ in range(max(1, min(times, 20))):
+            if len(combo) == 1:
+                pyautogui.press(combo[0])
+            else:
+                pyautogui.hotkey(*combo)
+            time.sleep(0.12)
+        return f"Tombol {keys} ditekan {times} kali."
     except Exception as exc:  # noqa: BLE001
-        return f"GAGAL menekan hotkey: {exc}"
+        return f"GAGAL menekan tombol: {exc}"
+
+
+def focus_window(title_hint: str) -> str:
+    """Aktifkan jendela aplikasi tertentu supaya perintah ketik/klik tidak salah sasaran."""
+    if _focus_window(title_hint):
+        return f"Jendela '{title_hint}' sekarang aktif."
+    return f"GAGAL: tidak ada jendela dengan judul mengandung '{title_hint}'. Buka aplikasinya dulu."
+
+
+def list_windows() -> str:
+    """Lihat daftar jendela yang sedang terbuka. Berguna sebelum mengetik atau klik."""
+    try:
+        import pygetwindow as gw
+
+        titles = [w.title for w in gw.getAllWindows() if (w.title or "").strip()]
+        return "\n".join(f"- {t}" for t in titles[:30]) or "(tidak ada jendela terdeteksi)"
+    except Exception as exc:  # noqa: BLE001
+        return f"GAGAL membaca daftar jendela: {exc}"
+
+
+def click_at(x: int, y: int, double: bool = False) -> str:
+    """Klik di koordinat layar tertentu."""
+    try:
+        import pyautogui
+
+        pyautogui.click(x, y, clicks=2 if double else 1, interval=0.1)
+        return f"Klik di ({x}, {y})."
+    except Exception as exc:  # noqa: BLE001
+        return f"GAGAL klik: {exc}"
+
+
+def wait_seconds(seconds: float) -> str:
+    """Tunggu sejenak. Pakai ini setelah membuka aplikasi atau halaman berat."""
+    s = max(0.2, min(float(seconds), 15))
+    time.sleep(s)
+    return f"Menunggu {s} detik."
+
+
+def read_screen_text(target_window: str = "") -> str:
+    """Baca teks dari jendela aktif dengan Ctrl+A lalu Ctrl+C, kemudian baca clipboard.
+
+    Berguna untuk membaca isi halaman web atau dokumen yang sedang dibuka.
+    """
+    try:
+        import pyautogui
+        import pyperclip
+
+        if target_window and not _focus_window(target_window):
+            return f"GAGAL: jendela '{target_window}' tidak ditemukan."
+
+        time.sleep(0.3)
+        pyautogui.hotkey("ctrl", "a")
+        time.sleep(0.2)
+        pyautogui.hotkey("ctrl", "c")
+        time.sleep(0.5)
+        pyautogui.click()  # batalkan seleksi
+        text = pyperclip.paste() or ""
+        text = " ".join(text.split())
+        if not text:
+            return "Tidak ada teks yang bisa dibaca dari jendela itu."
+        return text[:6000] + ("... (dipotong)" if len(text) > 6000 else "")
+    except Exception as exc:  # noqa: BLE001
+        return f"GAGAL membaca layar: {exc}"
+
+
+def fetch_web_page(url: str) -> str:
+    """Ambil dan baca isi teks sebuah halaman web LANGSUNG (tanpa browser).
+
+    Jauh lebih akurat daripada read_screen_text untuk merangkum artikel.
+    """
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    try:
+        import re as _re
+        import urllib.request
+
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            raw = resp.read(1_500_000).decode("utf-8", errors="replace")
+
+        raw = _re.sub(r"(?is)<(script|style|noscript).*?</\1>", " ", raw)
+        text = _re.sub(r"(?s)<[^>]+>", " ", raw)
+        text = _re.sub(r"&nbsp;?", " ", text)
+        text = " ".join(text.split())
+        if not text:
+            return "Halaman terbuka tapi tidak ada teks yang terbaca."
+        return text[:6000] + ("... (dipotong)" if len(text) > 6000 else "")
+    except Exception as exc:  # noqa: BLE001
+        return f"GAGAL membuka halaman: {exc}"
+
+
+def play_youtube_video(query: str) -> str:
+    """Cari di YouTube lalu LANGSUNG PUTAR video pertama (bukan cuma halaman hasil)."""
+    try:
+        import re as _re
+        import urllib.request
+
+        search = f"https://www.youtube.com/results?search_query={quote_plus(query)}"
+        req = urllib.request.Request(search, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            html = resp.read(900_000).decode("utf-8", errors="replace")
+
+        ids = _re.findall(r'"videoId":"([\w-]{11})"', html)
+        if not ids:
+            webbrowser.open(search)
+            return f"Video tidak terdeteksi, saya buka halaman pencarian '{query}'."
+
+        url = f"https://www.youtube.com/watch?v={ids[0]}"
+        webbrowser.open(url)
+        return f"Memutar video pertama untuk '{query}': {url}"
+    except Exception as exc:  # noqa: BLE001
+        webbrowser.open(f"https://www.youtube.com/results?search_query={quote_plus(query)}")
+        return f"Gagal memilih video ({exc}), halaman pencarian dibuka."
+
+
+def whatsapp_send(contact: str, message: str) -> str:
+    """Kirim pesan WhatsApp: fokus aplikasi, cari kontak, ketik, kirim."""
+    try:
+        import pyautogui
+
+        if not _focus_window("whatsapp"):
+            open_application("whatsapp")
+            time.sleep(4)
+            if not _focus_window("whatsapp"):
+                return "GAGAL: aplikasi WhatsApp tidak terbuka."
+
+        time.sleep(0.8)
+        pyautogui.hotkey("ctrl", "f")       # kotak pencarian kontak
+        time.sleep(0.6)
+        type_text(contact)
+        time.sleep(1.5)
+        pyautogui.press("down")             # pilih hasil pertama
+        time.sleep(0.3)
+        pyautogui.press("enter")
+        time.sleep(1.2)
+        type_text(message)
+        time.sleep(0.4)
+        pyautogui.press("enter")
+        return f"Pesan '{message[:40]}' dikirim ke '{contact}'. Mohon dicek layarnya."
+    except Exception as exc:  # noqa: BLE001
+        return f"GAGAL mengirim pesan WhatsApp: {exc}"
 
 
 def take_screenshot(filename: str = "") -> str:
@@ -255,20 +429,100 @@ def run_shell(command: str) -> str:
         return f"GAGAL: {exc}"
 
 
-def _focus_window(title_hint: str) -> bool:
-    """Aktifkan jendela yang judulnya mengandung title_hint."""
+def _win32_force_focus(hwnd: int) -> bool:
+    """Paksa jendela ke depan lewat Win32 API.
+
+    pygetwindow.activate() sering gagal di Windows karena OS melarang proses
+    lain 'mencuri' fokus. Trik AttachThreadInput di bawah adalah cara resmi
+    untuk mengatasinya.
+    """
+    if OS != "Windows":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        u32 = ctypes.windll.user32
+        SW_RESTORE = 9
+
+        if u32.IsIconic(hwnd):
+            u32.ShowWindow(hwnd, SW_RESTORE)
+
+        fg = u32.GetForegroundWindow()
+        cur_thread = ctypes.windll.kernel32.GetCurrentThreadId()
+        fg_thread = u32.GetWindowThreadProcessId(fg, None)
+        tgt_thread = u32.GetWindowThreadProcessId(hwnd, None)
+
+        for t in {fg_thread, tgt_thread}:
+            if t and t != cur_thread:
+                u32.AttachThreadInput(cur_thread, t, True)
+        try:
+            u32.BringWindowToTop(hwnd)
+            u32.SetForegroundWindow(hwnd)
+            u32.SetActiveWindow(hwnd)
+        finally:
+            for t in {fg_thread, tgt_thread}:
+                if t and t != cur_thread:
+                    u32.AttachThreadInput(cur_thread, t, False)
+
+        time.sleep(0.35)
+        return u32.GetForegroundWindow() == hwnd
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Win32 focus gagal: %s", exc)
+        return False
+
+
+def _active_title() -> str:
     try:
         import pygetwindow as gw
 
-        for w in gw.getAllWindows():
-            if title_hint.lower() in (w.title or "").lower() and w.title:
-                if w.isMinimized:
-                    w.restore()
-                w.activate()
-                time.sleep(0.4)
-                return True
+        return (gw.getActiveWindowTitle() or "").lower()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _focus_window(title_hint: str) -> bool:
+    """Aktifkan jendela yang judulnya mengandung title_hint. Dua strategi bertingkat."""
+    hint = title_hint.lower().strip()
+    if not hint:
+        return False
+
+    try:
+        import pygetwindow as gw
+
+        matches = [
+            w for w in gw.getAllWindows()
+            if (w.title or "").strip() and hint in w.title.lower()
+        ]
     except Exception as exc:  # noqa: BLE001
-        log.warning("Gagal fokus jendela '%s': %s", title_hint, exc)
+        log.warning("Tidak bisa membaca daftar jendela: %s", exc)
+        return False
+
+    if not matches:
+        log.info("Jendela '%s' tidak ditemukan.", hint)
+        return False
+
+    for w in matches:
+        # Strategi 1: cara bawaan pygetwindow
+        try:
+            if w.isMinimized:
+                w.restore()
+                time.sleep(0.3)
+            w.activate()
+            time.sleep(0.4)
+            if hint in _active_title():
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Strategi 2: paksa lewat Win32
+        hwnd = getattr(w, "_hWnd", None)
+        if hwnd and _win32_force_focus(hwnd):
+            return True
+        if hint in _active_title():
+            return True
+
+    log.warning("Semua strategi fokus gagal untuk '%s'.", hint)
     return False
 
 
@@ -318,6 +572,14 @@ REGISTRY = {
     "control_media": control_media,
     "type_text": type_text,
     "press_hotkey": press_hotkey,
+    "focus_window": focus_window,
+    "list_windows": list_windows,
+    "click_at": click_at,
+    "wait_seconds": wait_seconds,
+    "read_screen_text": read_screen_text,
+    "fetch_web_page": fetch_web_page,
+    "play_youtube_video": play_youtube_video,
+    "whatsapp_send": whatsapp_send,
     "take_screenshot": take_screenshot,
     "list_files": list_files,
     "read_file": read_file,
@@ -365,10 +627,48 @@ TOOL_SCHEMAS = [
             {"action": {"type": "string",
                         "enum": ["playpause", "next", "prev", "volume_up", "volume_down", "mute"]}},
             ["action"]),
-    _schema("type_text", "Mengetikkan teks ke jendela/aplikasi yang sedang aktif.",
-            {"text": {"type": "string"}}, ["text"]),
-    _schema("press_hotkey", "Menekan kombinasi tombol keyboard, mis. 'ctrl+s' atau 'alt+tab'.",
-            {"keys": {"type": "string"}}, ["keys"]),
+    _schema("type_text",
+            "Mengetik teks ke aplikasi. SELALU isi target_window kalau tahu aplikasinya, "
+            "supaya teks tidak salah masuk ke jendela lain.",
+            {"text": {"type": "string"},
+             "target_window": {"type": "string", "description": "sebagian judul jendela, mis. 'whatsapp', 'chrome'"}},
+            ["text"]),
+    _schema("press_hotkey",
+            "Menekan tombol atau kombinasi, mis. 'enter', 'ctrl+s', 'down'. times = berapa kali.",
+            {"keys": {"type": "string"},
+             "times": {"type": "integer"},
+             "target_window": {"type": "string"}},
+            ["keys"]),
+    _schema("focus_window",
+            "Mengaktifkan jendela aplikasi. WAJIB dipanggil sebelum mengetik atau klik "
+            "kalau aplikasinya belum tentu di depan.",
+            {"title_hint": {"type": "string"}}, ["title_hint"]),
+    _schema("list_windows",
+            "Melihat daftar jendela yang sedang terbuka beserta judulnya. "
+            "Pakai ini untuk memastikan aplikasi yang dimaksud memang sudah terbuka."),
+    _schema("click_at", "Klik mouse di koordinat layar tertentu.",
+            {"x": {"type": "integer"}, "y": {"type": "integer"},
+             "double": {"type": "boolean"}}, ["x", "y"]),
+    _schema("wait_seconds",
+            "Menunggu beberapa detik. Pakai setelah membuka aplikasi atau halaman berat "
+            "sebelum mengetik, agar tidak salah sasaran.",
+            {"seconds": {"type": "number"}}, ["seconds"]),
+    _schema("read_screen_text",
+            "MEMBACA isi teks dari jendela yang sedang terbuka (halaman web, dokumen). "
+            "Pakai kalau pengguna bertanya 'apa isi halaman ini' atau minta dirangkum.",
+            {"target_window": {"type": "string"}}),
+    _schema("fetch_web_page",
+            "Mengambil dan membaca isi sebuah alamat web secara langsung tanpa browser. "
+            "Lebih akurat daripada read_screen_text untuk merangkum artikel.",
+            {"url": {"type": "string"}}, ["url"]),
+    _schema("play_youtube_video",
+            "Mencari di YouTube lalu LANGSUNG MEMUTAR video pertama. "
+            "Pakai ini kalau pengguna bilang 'putarkan', 'tontonkan', 'mainkan video'.",
+            {"query": {"type": "string"}}, ["query"]),
+    _schema("whatsapp_send",
+            "Mengirim pesan WhatsApp ke sebuah kontak lewat aplikasi desktop.",
+            {"contact": {"type": "string"}, "message": {"type": "string"}},
+            ["contact", "message"]),
     _schema("take_screenshot", "Mengambil tangkapan layar dan menyimpannya ke workspace.",
             {"filename": {"type": "string", "description": "Opsional, mis. layar.png"}}),
     _schema("list_files", "Melihat isi folder workspace agen.",
